@@ -120,6 +120,7 @@
     if (p === "/login") return renderLogin();
     if (p === "/register") return renderRegister();
     if (p === "/verify-email") return renderVerify();
+    if (p === "/login-link") return renderLoginLinkLanding();
     if (p === "/reset-password") return renderResetPassword();
     if (p === "/legal") return renderLegal();
     if (p === "/search") return renderSearch();
@@ -182,7 +183,7 @@
               ${["manager","admin"].includes(state.me.role) ? `<a href="/account#admin">Admin Console</a>` : ""}
               <button id="logout-btn">Log out</button>
             </div>
-          </div>` : `<a href="/login">Log in</a>`}
+          </div>` : `<a class="header-login-link" href="/login">Log in</a>`}
       </div>`;
 
     $("#composer-toggle-btn")?.addEventListener("click", () => {
@@ -217,11 +218,19 @@
       $("#search-btn").setAttribute("aria-expanded", state.searchOpen ? "true" : "false");
       if (state.searchOpen) $("#search-input")?.focus();
     };
-    // Hovering/focusing the search area opens it even without a click; when
-    // it closes again (mouse leaves / focus moves away) keep state in sync.
-    $("#search-wrap")?.addEventListener("mouseenter", () => { state.searchOpen = true; });
+    // Hovering the search area opens it (CSS handles the reveal) and also
+    // drops keyboard focus straight into the field, so a mouse user can
+    // just start typing without an extra click. Moving away without
+    // pinning it open (via a click) closes it again.
+    $("#search-wrap")?.addEventListener("mouseenter", () => {
+      state.searchOpen = true;
+      $("#search-input")?.focus();
+    });
     $("#search-wrap")?.addEventListener("mouseleave", () => {
-      if (!$("#search-wrap").classList.contains("force-open")) state.searchOpen = false;
+      if (!$("#search-wrap").classList.contains("force-open")) {
+        state.searchOpen = false;
+        if (document.activeElement === $("#search-input")) $("#search-input")?.blur();
+      }
     });
     $("#search-form")?.addEventListener("submit", e => {
       e.preventDefault();
@@ -274,11 +283,13 @@
     const nav = $("#mobile-nav");
     if (!nav) return;
     const onHome = location.pathname === "/";
+    const onSearch = location.pathname === "/search";
+    const onAccount = location.pathname === "/account" || location.pathname === "/login";
     nav.innerHTML = `
       <a class="mobile-nav-item ${onHome ? "active" : ""}" href="/" aria-label="Home">
         <span class="mobile-nav-icon">▣</span><span>Home</span>
       </a>
-      <button class="mobile-nav-item" id="mobile-search-btn" aria-label="Search">
+      <button class="mobile-nav-item ${onSearch ? "active" : ""}" id="mobile-search-btn" aria-label="Search">
         <span class="mobile-nav-icon">⌕</span><span>Search</span>
       </button>
       ${state.me && state.currentMaster ? `
@@ -286,16 +297,17 @@
           <span class="mobile-nav-icon">+</span><span>Post</span>
         </button>` : ""}
       ${state.me ? `
-        <a class="mobile-nav-item" href="/account" aria-label="Account">
+        <a class="mobile-nav-item ${onAccount ? "active" : ""}" href="/account" aria-label="Account">
           <span class="mobile-nav-icon">${avatarHTML(state.me, "small")}</span><span>You</span>
         </a>` : `
-        <a class="mobile-nav-item" href="/login" aria-label="Log in">
+        <a class="mobile-nav-item ${onAccount ? "active" : ""}" href="/login" aria-label="Log in">
           <span class="mobile-nav-icon">⚇</span><span>Log in</span>
         </a>`}`;
     $("#mobile-search-btn")?.addEventListener("click", () => {
-      state.searchOpen = true;
-      renderHeader();
-      $("#search-input")?.focus();
+      // The inline header search panel is a desktop hover affordance and
+      // is hidden on mobile entirely, so the tab takes you to the
+      // dedicated full-screen search page instead.
+      navigate("/search");
     });
     $("#mobile-compose-btn")?.addEventListener("click", () => setComposerOpen(true));
   }
@@ -1207,6 +1219,18 @@
       await api(`/auth/verify?token=${encodeURIComponent(token)}`);
       $("#verify-status").innerHTML = `<p class="success">Email verified. <a href="/login">Log in</a>.</p>`;
     } catch (e) { $("#verify-status").innerHTML = errorBox(e); }
+  }
+
+  async function renderLoginLinkLanding() {
+    // The emailed login link points here (a real page) rather than
+    // straight at the API, so the person lands on branded UI instead of
+    // a bare JSON response while the token is exchanged for a session.
+    const token = new URLSearchParams(location.search).get("token") || "";
+    authLayout("Signing you in", `<div id="login-link-status">${loading()}</div>`);
+    try {
+      state.me = await api(`/auth/login-link?token=${encodeURIComponent(token)}`, {method:"GET"});
+      navigate("/");
+    } catch (e) { $("#login-link-status").innerHTML = errorBox(e); }
   }
 
   async function renderResetPassword() {

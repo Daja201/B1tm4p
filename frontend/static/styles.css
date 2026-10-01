@@ -197,14 +197,50 @@ img, video { max-width: 100%; }
   color: var(--accent);
   font-weight: 700;
 }
+.search-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
 .search-inline {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
-  max-width: 520px;
 }
 .search-inline input { min-width: 80px; }
+/* The search field itself is a "rolldown-panel" like the other header
+   dropdowns, but it should unfurl sideways from the search icon rather
+   than drop down underneath it — so it overrides the generic panel's
+   position/transform here. #search-wrap wins on specificity over the
+   shared .rolldown-panel / .rolldown:hover rules regardless of source
+   order. */
+#search-wrap .search-panel {
+  position: absolute;
+  top: 50%;
+  right: 44px;
+  left: auto;
+  width: min(340px, 56vw);
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  transform: translateY(-50%) scaleX(.97);
+  transform-origin: right center;
+}
+#search-wrap .search-panel input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0,0,0,.28);
+}
+#search-wrap:hover .search-panel,
+#search-wrap:focus-within .search-panel,
+#search-wrap.force-open .search-panel {
+  transform: translateY(-50%) scaleX(1);
+}
 .master-select {
   flex: 0 0 auto;
   max-width: 180px;
@@ -526,10 +562,14 @@ th, td { border-bottom: 1px solid var(--border); text-align: left; padding: 9px 
   .header-spacer { display: none; }
   .master-dropdown-toggle { max-width: 120px; }
 
-  /* App-shell header: brand + tags only, everything else lives in the
-     bottom tab bar instead of being crammed into the top bar. */
-  #search-btn, #composer-toggle-btn, .account-wrap, a[aria-label^="Report"] { display: none; }
-  .header-inner { gap: 8px; }
+  /* App-shell header: brand + tags only. Every account/action affordance
+     (search, compose, account menu, report, log in) lives in the bottom
+     tab bar instead — nothing in the top bar duplicates it, so the top
+     bar reads as a slim app title bar rather than a squeezed desktop nav. */
+  #search-btn, #composer-toggle-btn, .account-wrap, a[aria-label^="Report"],
+  .header-login-link, .search-wrap { display: none; }
+  .header-inner { gap: 8px; min-height: 50px; }
+  .site-header { min-height: 50px; }
 
   .mobile-nav { display: flex; }
   body { padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px)); }
