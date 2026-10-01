@@ -1,0 +1,17 @@
+{
+    email gejmr.daja@gmail.com
+}
+
+daveza.eu, www.daveza.eu {
+    redir https://b1tm4p.daveza.eu{uri}
+}
+
+b1tm4p.daveza.eu {
+    handle /api/* {
+        reverse_proxy backend:8080
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
+}
