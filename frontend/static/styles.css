@@ -220,7 +220,7 @@ img, video { max-width: 100%; }
   top: 50%;
   right: 44px;
   left: auto;
-  width: min(340px, 56vw);
+  width: min(200px, 56vw);
   margin: 0;
   padding: 0;
   background: transparent;
