@@ -144,6 +144,15 @@ function searchTagIds(term) {
   return tags.map(r => r.id);
 }
 
+function searchUserIds(term) {
+  const db = requireUsersDb();
+  const q = `%${term.toLowerCase()}%`;
+  const users = db.prepare(`
+    SELECT id FROM users WHERE LOWER(username) LIKE ?
+  `).all(q);
+  return users.map(r => r.id);
+}
+
 function closeCrossDbConnections() {
   if (usersDb && usersDb.open) usersDb.close();
   if (tagsDb && tagsDb.open) tagsDb.close();
@@ -166,5 +175,6 @@ module.exports = {
   getTagBySlug,
   validateTagPair,
   searchTagIds,
+  searchUserIds,
   closeCrossDbConnections
 };

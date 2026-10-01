@@ -7,7 +7,8 @@ const {
   getMastersByIds,
   getMasterBySlug,
   getTagBySlug,
-  searchTagIds
+  searchTagIds,
+  searchUserIds
 } = require('../lib/crossDb');
 const {
   upload,
@@ -42,6 +43,56 @@ function normalizeBodyInput(body, isReply, hasFile) {
   if (bodyType !== 'text' && !hasFile) return { error: 'invalid_input' };
   if (!isReply && (!body.master_tag_id || !body.tag_id)) return { error: 'invalid_input' };
   return { bodyType, bodyText, headerTitle };
+}
+
+// Recognizes a handful of common date/time spellings typed into the search
+// box (ISO, slash and dot formats, plus bare "YYYY-MM" and "YYYY") and turns
+// them into a UTC start-of-period timestamp. The caller then filters for
+// created_at >= that timestamp, i.e. "everything from that date forward".
+function validDate(y, mo, d) {
+  return mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && y >= 1970 && y <= 2200;
+}
+
+function parseDateQuery(term) {
+  const t = term.trim();
+  let m;
+
+  if ((m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})$/.exec(t))) {
+    const [y, mo, d, h, mi] = [m[1], m[2], m[3], m[4], m[5]].map(Number);
+    if (!validDate(y, mo, d) || h > 23 || mi > 59) return null;
+    return { startTs: Math.floor(Date.UTC(y, mo - 1, d, h, mi, 0) / 1000) };
+  }
+  if ((m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t))) {
+    const [y, mo, d] = [m[1], m[2], m[3]].map(Number);
+    if (!validDate(y, mo, d)) return null;
+    return { startTs: Math.floor(Date.UTC(y, mo - 1, d, 0, 0, 0) / 1000) };
+  }
+  if ((m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(t))) {
+    const [y, mo, d] = [m[1], m[2], m[3]].map(Number);
+    if (!validDate(y, mo, d)) return null;
+    return { startTs: Math.floor(Date.UTC(y, mo - 1, d, 0, 0, 0) / 1000) };
+  }
+  if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t))) {
+    const [mo, d, y] = [m[1], m[2], m[3]].map(Number);
+    if (!validDate(y, mo, d)) return null;
+    return { startTs: Math.floor(Date.UTC(y, mo - 1, d, 0, 0, 0) / 1000) };
+  }
+  if ((m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(t))) {
+    const [d, mo, y] = [m[1], m[2], m[3]].map(Number);
+    if (!validDate(y, mo, d)) return null;
+    return { startTs: Math.floor(Date.UTC(y, mo - 1, d, 0, 0, 0) / 1000) };
+  }
+  if ((m = /^(\d{4})-(\d{2})$/.exec(t))) {
+    const [y, mo] = [m[1], m[2]].map(Number);
+    if (mo < 1 || mo > 12 || y < 1970 || y > 2200) return null;
+    return { startTs: Math.floor(Date.UTC(y, mo - 1, 1, 0, 0, 0) / 1000) };
+  }
+  if ((m = /^(\d{4})$/.exec(t))) {
+    const y = Number(m[1]);
+    if (y < 1970 || y > 2200) return null;
+    return { startTs: Math.floor(Date.UTC(y, 0, 1, 0, 0, 0) / 1000) };
+  }
+  return null;
 }
 
 function authorMap(ids) {
@@ -185,21 +236,59 @@ function createContentRouter({ contentDb }) {
         if (!tag) return res.json({ items: [], total: 0 });
       }
 
+      // A search term that looks like a date/time (ISO, slash, dot, bare
+      // year or year-month) is treated as "everything from that moment
+      // forward", rather than text-matched — that's the only sane reading
+      // of a date typed into a free-text box.
+      const dateQuery = search ? parseDateQuery(search) : null;
+
       let searchTagIdList = null;
-      if (search) searchTagIdList = searchTagIds(search);
+      let searchUserIdList = null;
+      if (search && !dateQuery) {
+        searchTagIdList = searchTagIds(search);
+        searchUserIdList = searchUserIds(search);
+      }
 
       const clauses = ['p.deleted = 0'];
       const params = [];
       if (master) { clauses.push('p.master_tag_id = ?'); params.push(master.id); }
       if (tag) { clauses.push('p.tag_id = ?'); params.push(tag.id); }
-      if (search) {
+      if (dateQuery) {
+        clauses.push('p.created_at >= ?');
+        params.push(dateQuery.startTs);
+      } else if (search) {
         const like = `%${search.toLowerCase()}%`;
-        const pieces = ['LOWER(COALESCE(p.body_text, \'\')) LIKE ?', 'LOWER(COALESCE(p.header_title, \'\')) LIKE ?'];
+        const pieces = [
+          'LOWER(COALESCE(p.body_text, \'\')) LIKE ?',
+          'LOWER(COALESCE(p.header_title, \'\')) LIKE ?'
+        ];
         params.push(like, like);
         if (searchTagIdList && searchTagIdList.length) {
           pieces.push(`p.tag_id IN (${searchTagIdList.map(() => '?').join(',')})`);
           params.push(...searchTagIdList);
         }
+        if (searchUserIdList && searchUserIdList.length) {
+          // Matches the post's own author...
+          pieces.push(`p.author_id IN (${searchUserIdList.map(() => '?').join(',')})`);
+          params.push(...searchUserIdList);
+        }
+        // ...and posts that have a matching (non-deleted) reply, by text or
+        // by the replying user's name, so comment search surfaces the post
+        // it belongs to in the main feed.
+        const replyPieces = [
+          'LOWER(COALESCE(r.body_text, \'\')) LIKE ?',
+          'LOWER(COALESCE(r.header_title, \'\')) LIKE ?'
+        ];
+        const replyParams = [like, like];
+        if (searchUserIdList && searchUserIdList.length) {
+          replyPieces.push(`r.author_id IN (${searchUserIdList.map(() => '?').join(',')})`);
+          replyParams.push(...searchUserIdList);
+        }
+        pieces.push(`EXISTS (
+          SELECT 1 FROM replies r
+          WHERE r.post_id = p.id AND r.deleted = 0 AND (${replyPieces.join(' OR ')})
+        )`);
+        params.push(...replyParams);
         clauses.push(`(${pieces.join(' OR ')})`);
       }
 
@@ -216,7 +305,11 @@ function createContentRouter({ contentDb }) {
       const users = authorMap(rows.map(r => r.author_id));
       const tags = getTagsByIds(rows.map(r => r.tag_id));
       const masters = getMastersByIds(rows.map(r => r.master_tag_id));
-      res.json({ items: rows.map(r => decoratePost(r, users, tags, masters)), total });
+      res.json({
+        items: rows.map(r => decoratePost(r, users, tags, masters)),
+        total,
+        search_meta: dateQuery ? { type: 'date', from: dateQuery.startTs } : (search ? { type: 'text' } : null)
+      });
     } catch (err) {
       next(err);
     }

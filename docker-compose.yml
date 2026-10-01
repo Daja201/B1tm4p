@@ -1,8 +1,14 @@
 services:
   backend:
     build: ./backend
-    ports:
-      - "8080:8080"
+    # No published ports here on purpose: the frontend's nginx reaches this
+    # container over the internal docker network at http://backend:8080, and
+    # that's the only path that should exist to it. Publishing 8080:8080
+    # (the old config) exposed the backend directly on the host, which is
+    # what PUBLIC_BASE_URL / Google's redirect URI was pointing browsers at
+    # — a port that typically isn't opened in the firewall for a public
+    # domain, hence ERR_CONNECTION_REFUSED. If you need direct host access
+    # for debugging, bind it to localhost only, e.g. "127.0.0.1:8080:8080".
     env_file:
       - .env
     volumes:

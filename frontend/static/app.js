@@ -151,7 +151,7 @@
         <button class="icon-btn" id="search-btn" aria-label="Search">⌕</button>
         ${state.searchOpen ? `
           <form class="search-inline" id="search-form">
-            <input id="search-input" value="${esc(state.search || "")}" placeholder="Search posts" aria-label="Search posts">
+            <input id="search-input" value="${esc(state.search || "")}" placeholder="Search users, posts, comments, or a date (e.g. 2026-05-01)" aria-label="Search everything">
           </form>` : ""}
         <a class="brand" href="/">${brand}</a>
         ${masterSelectHTML}
@@ -210,6 +210,15 @@
         <span>B1tm4p</span>
         <span><a href="/legal">Legal / Cookies</a> · © ${new Date().getFullYear()} B1tm4p</span>
       </div>`;
+  }
+
+  function searchMetaNoteHTML(meta) {
+    if (!meta) return `<p id="search-meta-note"></p>`;
+    if (meta.type === "date") {
+      const d = new Date(meta.from * 1000);
+      return `<p id="search-meta-note" class="muted">Showing everything from <strong>${esc(d.toISOString().slice(0,16).replace("T"," "))} UTC</strong> onward.</p>`;
+    }
+    return `<p id="search-meta-note" class="muted">Matching users, posts and comments.</p>`;
   }
 
   function loading() { return `<div class="loading"><div class="spinner" aria-label="Loading"></div></div>`; }
@@ -373,6 +382,9 @@
     try {
       const d = await fetchPosts(params, state.feedLimit, 0);
       state.feedTotal = d.total;
+      state.feedSearchMeta = d.search_meta || null;
+      const metaEl = $("#search-meta-note");
+      if (metaEl) metaEl.outerHTML = searchMetaNoteHTML(state.feedSearchMeta);
       if (!d.items.length) { container.innerHTML = `<div class="notice">No posts yet.</div>`; return; }
       container.innerHTML = d.items.map(postHTML).join("") +
         (d.items.length < d.total ? `<button class="secondary" id="load-more">Load more</button>` : "");
@@ -1113,7 +1125,7 @@
     state.currentMaster = null; state.search = new URLSearchParams(location.search).get("q") || "";
     renderHeader(); renderFooter();
     const app = $("#app");
-    app.innerHTML = `<h1 class="page-title">Search</h1><p class="muted">Query: ${esc(state.search)}</p><section id="feed" class="feed">${loading()}</section>`;
+    app.innerHTML = `<h1 class="page-title">Search</h1><p class="muted">Query: ${esc(state.search)}</p><p id="search-meta-note"></p><section id="feed" class="feed">${loading()}</section>`;
     await loadFeed($("#feed"), {search:state.search});
   }
 
