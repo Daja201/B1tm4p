@@ -1005,7 +1005,7 @@
           <h2>Password</h2>
           <form id="password-form" class="form-grid">
             <label>Current password <input id="current-password" type="password" required></label>
-            <label>New password <input id="new-password" type="password" required minlength="8"></label>
+            <label>New password (First use bottom input line to send apssword renewal email) <input id="new-password" type="password" required minlength="8"></label>
             <button class="primary">Change password</button>
             <div id="password-status"></div>
           </form>
