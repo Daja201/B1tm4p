@@ -575,27 +575,45 @@
     </form>`;
   }
 
-  function replyNodeHTML(node, postId, depth) {
+  function replyNodeHTML(node, postId, depth, rootPostId) {
     const author = node.author || {};
+    const children = node.replies || [];
     const body = node.deleted
       ? `<div class="body-text muted">[deleted]</div>`
       : (node.body_type === "text" ? `<div class="body-text">${esc(node.body_text || "")}</div>` : mediaHTML(node.body_type, node.file_path));
-    return `<div class="reply-node" style="margin-left:${Math.min(depth,8)*20}px" data-reply-id="${esc(node.id)}">
+    // backlink to parent
+    const backlink = node.parent_reply_id
+      ? `<a class="reply-backlink" data-target-reply="${esc(node.parent_reply_id)}">&gt;&gt;${esc(node.parent_reply_id)}</a>`
+      : "";
+    // "reply to OP" button for nested replies
+    const replyOpBtn = depth > 0 && !node.deleted
+      ? `<button class="link-btn reply-op-btn" data-open-reply-op="${esc(postId)}">↩OP</button>`
+      : "";
+    const childrenHTML = children.length === 0 ? "" : `
+      <div class="reply-children" id="children-${esc(node.id)}" hidden>
+        ${children.map(c => replyNodeHTML(c, postId, depth+1, rootPostId)).join("")}
+      </div>
+      <button class="link-btn reply-expand-btn" data-expand="${esc(node.id)}">
+        ▸ ${children.length} ${children.length === 1 ? "reply" : "replies"}
+      </button>`;
+    return `<div class="reply-node" data-reply-id="${esc(node.id)}" data-depth="${Math.min(depth,6)}">
       <div class="reply-meta">
         ${avatarHTML(author, "small")}
         <span class="author-name">${esc(author.username || "unknown")}</span>
         <span class="timestamp">${relativeTime(node.created_at)}</span>
         ${contentIdHTML(node.id)}
+        ${backlink}
         ${!node.deleted ? `<button class="like ${node.liked?"liked":""}" data-like-type="reply" data-like-id="${esc(node.id)}">
           <span class="heart">${node.liked?"♥":"♡"}</span> <span class="like-count">${Number(node.likes_count||0)}</span>
         </button>` : ""}
         ${!node.deleted ? `<button class="link-btn" data-open-reply="${esc(node.id)}">Reply</button>` : ""}
+        ${replyOpBtn}
         ${!node.deleted ? reportLinkHTML("reply", node.id) : ""}
       </div>
       ${node.header_title ? `<div class="header-title">${esc(node.header_title)}</div>` : ""}
       ${body}
       <div class="reply-inline-form" id="reply-inline-${esc(node.id)}"></div>
-      ${(node.replies||[]).map(child => replyNodeHTML(child, postId, depth+1)).join("")}
+      ${childrenHTML}
     </div>`;
   }
 
@@ -655,6 +673,7 @@
       wireLikeButtons(app);
       wireShareButtons(app);
       wireReplyForm($(`[data-reply-form="post-${post.id}"]`), app, post.id);
+      // Reply to a specific reply
       app.querySelectorAll("[data-open-reply]").forEach(btn => {
         btn.onclick = () => {
           const replyId = btn.dataset.openReply;
@@ -664,6 +683,48 @@
           wireReplyForm(slot.querySelector("form"), app, post.id);
         };
       });
+
+      // Reply to OP (parent post) from inside a nested reply
+      app.querySelectorAll("[data-open-reply-op]").forEach(btn => {
+        btn.onclick = () => {
+          const topForm = $(`[data-reply-form="post-${post.id}"]`);
+          if (topForm) { topForm.querySelector("textarea").focus(); topForm.scrollIntoView({behavior:"smooth", block:"center"}); }
+        };
+      });
+
+      // Expand/collapse child replies
+      app.querySelectorAll("[data-expand]").forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.expand;
+          const box = $(`#children-${id}`);
+          const collapsed = box.hidden;
+          box.hidden = !collapsed;
+          btn.textContent = collapsed
+            ? `▾ ${box.querySelectorAll(":scope > .reply-node").length} ${box.querySelectorAll(":scope > .reply-node").length === 1 ? "reply" : "replies"}`
+            : `▸ ${box.querySelectorAll(":scope > .reply-node").length} ${box.querySelectorAll(":scope > .reply-node").length === 1 ? "reply" : "replies"}`;
+          if (collapsed) wireLikeButtons(box);
+        };
+      });
+
+      // Backlink hover: highlight target reply, click: scroll to it
+      app.querySelectorAll("[data-target-reply]").forEach(a => {
+        const targetId = a.dataset.targetReply;
+        a.onclick = e => {
+          e.preventDefault();
+          const target = app.querySelector(`[data-reply-id="${targetId}"]`);
+          if (!target) return;
+          // expand parents if hidden
+          let el = target;
+          while (el) {
+            if (el.hidden) el.hidden = false;
+            el = el.parentElement;
+          }
+          target.scrollIntoView({behavior:"smooth", block:"center"});
+          target.classList.add("reply-highlight");
+          setTimeout(() => target.classList.remove("reply-highlight"), 1500);
+        };
+      });
+
       return;
     } catch (e) { app.innerHTML = errorBox(e); return; }
   }

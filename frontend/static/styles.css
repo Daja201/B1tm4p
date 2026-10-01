@@ -251,14 +251,42 @@ main {
   text-decoration: none;
 }
 .thread-link { text-decoration: none; color: var(--muted); }
-.reply-tree { display: grid; gap: 12px; }
-.reply-node { border-left: 1px solid var(--border); padding-left: 12px; }
-.reply-node[data-depth="1"] { margin-left: 14px; }
-.reply-node[data-depth="2"] { margin-left: 28px; }
-.reply-node[data-depth="3"] { margin-left: 42px; }
-.reply-node[data-depth="4"] { margin-left: 56px; }
-.reply-node[data-depth="5"] { margin-left: 70px; }
-.reply-node[data-depth="6"] { margin-left: 84px; }
+.reply-tree { display: grid; gap: 10px; }
+
+/* depth indentation via data-depth attribute */
+.reply-node { border-left: 2px solid var(--border); padding-left: 10px; position: relative; }
+.reply-node[data-depth="0"] { margin-left: 0; }
+.reply-node[data-depth="1"] { margin-left: 16px; }
+.reply-node[data-depth="2"] { margin-left: 32px; }
+.reply-node[data-depth="3"] { margin-left: 48px; }
+.reply-node[data-depth="4"] { margin-left: 60px; }
+.reply-node[data-depth="5"] { margin-left: 68px; }
+.reply-node[data-depth="6"] { margin-left: 72px; }
+
+/* children container — hidden by default, shown when expanded */
+.reply-children { display: grid; gap: 10px; margin-top: 8px; }
+
+/* expand toggle button */
+.reply-expand-btn { margin-top: 6px; font-size: .78rem; opacity: .7; }
+.reply-expand-btn:hover { opacity: 1; }
+
+/* backlink >>id chip */
+.reply-backlink {
+  font-size: .75rem;
+  color: var(--accent, #FF7A00);
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: 600;
+}
+.reply-backlink:hover { text-decoration: underline; }
+
+/* ↩OP button */
+.reply-op-btn { font-size: .72rem; opacity: .6; }
+.reply-op-btn:hover { opacity: 1; }
+
+/* flash highlight when scrolled-to via backlink */
+@keyframes reply-flash { 0%,100% { background: transparent; } 30% { background: color-mix(in srgb, var(--accent,#FF7A00) 18%, transparent); } }
+.reply-highlight { border-radius: 4px; animation: reply-flash .8s ease; }
 .reply-toggle { font-size: .8rem; color: var(--muted); border: 0; padding: 0; }
 .banner {
   width: 100%;
