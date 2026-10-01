@@ -161,11 +161,12 @@
           <span class="brand-icon" aria-hidden="true">▣</span>
           <span class="brand-text">B1tm4p</span>
         </a>
-        <button class="icon-btn" id="search-btn" aria-label="Search">⌕</button>
-        ${state.searchOpen ? `
-          <form class="search-inline" id="search-form">
+        <div class="search-wrap rolldown ${state.searchOpen ? "force-open" : ""}" id="search-wrap">
+          <form class="search-inline rolldown-panel search-panel" id="search-form">
             <input id="search-input" value="${esc(state.search || "")}" placeholder="Search users, posts, comments, or a date (e.g. 2026-05-01)" aria-label="Search everything">
-          </form>` : ""}
+          </form>
+          <button type="button" class="icon-btn" id="search-btn" aria-label="Search" aria-expanded="${state.searchOpen ? "true" : "false"}">⌕</button>
+        </div>
         ${masterDropdownHTML}
         <a class="icon-btn" href="${reportHref}" aria-label="${state.currentMaster ? `Report ${esc(state.currentMaster.name)}` : "Report"}" title="${state.currentMaster ? `Report ${esc(state.currentMaster.name)}` : "Report"}">⚑</a>
         <div class="header-spacer"></div>
@@ -211,9 +212,17 @@
 
     $("#search-btn").onclick = () => {
       state.searchOpen = !state.searchOpen;
-      renderHeader();
+      const wrap = $("#search-wrap");
+      wrap.classList.toggle("force-open", state.searchOpen);
+      $("#search-btn").setAttribute("aria-expanded", state.searchOpen ? "true" : "false");
       if (state.searchOpen) $("#search-input")?.focus();
     };
+    // Hovering/focusing the search area opens it even without a click; when
+    // it closes again (mouse leaves / focus moves away) keep state in sync.
+    $("#search-wrap")?.addEventListener("mouseenter", () => { state.searchOpen = true; });
+    $("#search-wrap")?.addEventListener("mouseleave", () => {
+      if (!$("#search-wrap").classList.contains("force-open")) state.searchOpen = false;
+    });
     $("#search-form")?.addEventListener("submit", e => {
       e.preventDefault();
       const q = $("#search-input").value.trim();
