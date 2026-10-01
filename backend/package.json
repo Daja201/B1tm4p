@@ -1,0 +1,5 @@
+{
+  "name":"b1tm4p-backend","version":"1.0.0","private":true,"type":"commonjs",
+  "scripts":{"start":"node server.js"},
+  "dependencies":{"bcryptjs":"2.4.3","better-sqlite3":"11.3.0","cookie-parser":"1.4.7","dotenv":"16.4.5","express":"4.21.1","multer":"1.4.5-lts.1","nodemailer":"6.9.15","sharp":"0.33.5","uuid":"11.0.2"}
+}
