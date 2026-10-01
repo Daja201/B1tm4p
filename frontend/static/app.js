@@ -268,10 +268,10 @@
     return `<article class="feed-item" data-post-id="${esc(post.id)}">
       <aside class="feed-author">
         ${avatarHTML(author)}
-        <a class="author-name" href="/search?q=${encodeURIComponent(author.username || "")}">${esc(author.username || "unknown")}</a>
-        <span class="timestamp">${relativeTime(post.created_at)}</span>
-        ${contentIdHTML(post.id)}
         <div class="row">
+          <a class="author-name" href="/search?q=${encodeURIComponent(author.username || "")}">${esc(author.username || "unknown")}</a>
+          <span class="timestamp">${relativeTime(post.created_at)}</span>
+          ${contentIdHTML(post.id)}
           <button class="like ${post.liked ? "liked":""}" data-like-type="post" data-like-id="${esc(post.id)}" title="Like">
             <span class="heart">${post.liked ? "♥" : "♡"}</span> <span class="like-count">${Number(post.likes_count || 0)}</span>
           </button>
@@ -633,14 +633,16 @@
         <article class="card">
           <div class="feed-author">
             ${avatarHTML(post.author)}
-            <span class="author-name">${esc(post.author?.username || "unknown")}</span>
-            <span class="timestamp">${relativeTime(post.created_at)}</span>
-            ${contentIdHTML(post.id)}
-            <button class="like ${post.liked?"liked":""}" data-like-type="post" data-like-id="${esc(post.id)}">
-              <span class="heart">${post.liked?"♥":"♡"}</span> <span class="like-count">${Number(post.likes_count||0)}</span>
-            </button>
-            ${shareButtonHTML(post)}
-            ${reportLinkHTML("post", post.id)}
+            <div class="row">
+              <span class="author-name">${esc(post.author?.username || "unknown")}</span>
+              <span class="timestamp">${relativeTime(post.created_at)}</span>
+              ${contentIdHTML(post.id)}
+              <button class="like ${post.liked?"liked":""}" data-like-type="post" data-like-id="${esc(post.id)}">
+                <span class="heart">${post.liked?"♥":"♡"}</span> <span class="like-count">${Number(post.likes_count||0)}</span>
+              </button>
+              ${shareButtonHTML(post)}
+              ${reportLinkHTML("post", post.id)}
+            </div>
           </div>
           ${post.header_title ? `<div class="header-title">${esc(post.header_title)}</div>` : ""}
           ${body}

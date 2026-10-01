@@ -207,8 +207,10 @@ main {
   border-top: 1px solid var(--border);
   padding: 18px 0;
 }
-.feed-author { display: grid; align-content: start; gap: 7px; }
-.feed-author .avatar { width: 46px; height: 46px; }
+.feed-author { display: flex; align-items: center; gap: 10px; }
+.feed-author .avatar { width: 46px; height: 46px; flex-shrink: 0; }
+.feed-author .row { flex-wrap: wrap; flex: 1; }
+.reply-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .author-name { font-weight: 650; word-break: break-word; }
 .timestamp { color: var(--muted); font-size: .86rem; }
 .content-id {
@@ -364,7 +366,6 @@ th, td { border-bottom: 1px solid var(--border); text-align: left; padding: 9px 
 .admin-table { overflow-x: auto; }
 @media (max-width: 720px) {
   .feed-item { grid-template-columns: 1fr; }
-  .feed-author { grid-template-columns: auto 1fr; align-items: center; }
   .feed-author .avatar { width: 38px; height: 38px; }
   .two-col { grid-template-columns: 1fr; }
   .header-spacer { display: none; }
