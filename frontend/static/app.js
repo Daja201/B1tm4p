@@ -35,6 +35,7 @@
   }
 
   const $ = (s, root = document) => root.querySelector(s);
+  const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
   }[c]));
@@ -132,11 +133,20 @@
   }
 
   function renderHeader() {
-    const brand = `<span>B1tm4p</span>`;
-    const masterSelectHTML = state.masters.length ? `
-      <select id="master-select" class="master-select" aria-label="Master tag">
-        ${state.masters.map(m => `<option value="${esc(m.slug)}" ${m.slug === state.selectedMasterSlug ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
-      </select>` : "";
+    // Home icon + brand text are now a single clickable unit.
+    const currentMasterName = state.masters.find(m => m.slug === state.selectedMasterSlug)?.name;
+    const masterDropdownHTML = state.masters.length ? `
+      <div class="master-dropdown rolldown" id="master-dropdown">
+        <button type="button" class="master-dropdown-toggle" id="master-dropdown-toggle"
+          aria-haspopup="listbox" aria-expanded="false">
+          <span class="master-dropdown-label">${esc(currentMasterName || "Tags")}</span>
+          <span class="caret" aria-hidden="true">▾</span>
+        </button>
+        <ul class="master-dropdown-list rolldown-panel" id="master-dropdown-list" role="listbox" aria-label="Master tags">
+          ${state.masters.map(m => `
+            <li role="option" tabindex="0" data-slug="${esc(m.slug)}" aria-selected="${m.slug === state.selectedMasterSlug ? "true":"false"}" class="${m.slug === state.selectedMasterSlug ? "active" : ""}">${esc(m.name)}</li>`).join("")}
+        </ul>
+      </div>` : "";
     // Header report button is only ever for the master tag itself (the whole
     // category) — reporting individual posts/replies happens next to that
     // content instead, see reportLinkHTML().
@@ -147,40 +157,58 @@
     $("#site-header").className = "site-header";
     $("#site-header").innerHTML = `
       <div class="header-inner">
-        <a class="icon-btn" href="/" aria-label="Home">⌂</a>
+        <a class="brand-home" href="/" aria-label="B1tm4p home">
+          <span class="brand-icon" aria-hidden="true">▣</span>
+          <span class="brand-text">B1tm4p</span>
+        </a>
         <button class="icon-btn" id="search-btn" aria-label="Search">⌕</button>
         ${state.searchOpen ? `
           <form class="search-inline" id="search-form">
             <input id="search-input" value="${esc(state.search || "")}" placeholder="Search users, posts, comments, or a date (e.g. 2026-05-01)" aria-label="Search everything">
           </form>` : ""}
-        <a class="brand" href="/">${brand}</a>
-        ${masterSelectHTML}
+        ${masterDropdownHTML}
         <a class="icon-btn" href="${reportHref}" aria-label="${state.currentMaster ? `Report ${esc(state.currentMaster.name)}` : "Report"}" title="${state.currentMaster ? `Report ${esc(state.currentMaster.name)}` : "Report"}">⚑</a>
         <div class="header-spacer"></div>
         ${state.me && state.currentMaster ? `
           <button class="icon-btn" id="composer-toggle-btn" aria-label="New post" aria-expanded="${state.composerOpen ? "true":"false"}">+</button>` : ""}
         ${state.me ? `
-          <div class="account-wrap">
-            <button class="avatar-button" id="avatar-menu-btn" aria-label="Account">
+          <div class="account-wrap rolldown">
+            <button class="avatar-button" id="avatar-menu-btn" aria-label="Account" aria-haspopup="true" aria-expanded="false">
               ${avatarHTML(state.me)}
             </button>
-            ${state.accountMenu ? `
-              <div class="account-menu">
-                <a href="/account">Account</a>
-                ${["manager","admin"].includes(state.me.role) ? `<a href="/account#admin">Admin Console</a>` : ""}
-                <button id="logout-btn">Log out</button>
-              </div>` : ""}
+            <div class="account-menu rolldown-panel">
+              <a href="/account">Account</a>
+              ${["manager","admin"].includes(state.me.role) ? `<a href="/account#admin">Admin Console</a>` : ""}
+              <button id="logout-btn">Log out</button>
+            </div>
           </div>` : `<a href="/login">Log in</a>`}
       </div>`;
 
     $("#composer-toggle-btn")?.addEventListener("click", () => {
       setComposerOpen(!state.composerOpen);
     });
-    $("#master-select")?.addEventListener("change", e => {
-      setSelectedMaster(e.target.value);
-      if (location.pathname === "/") renderHome();
-      else navigate("/");
-    });
+
+    // Master tags: custom "drawn list" dropdown (replaces native <select>).
+    const masterToggle = $("#master-dropdown-toggle");
+    const masterList = $("#master-dropdown-list");
+    if (masterToggle && masterList) {
+      masterToggle.addEventListener("click", () => {
+        const wrap = $("#master-dropdown");
+        const open = wrap.classList.toggle("force-open");
+        masterToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      masterList.querySelectorAll("li[data-slug]").forEach(li => {
+        const choose = () => {
+          setSelectedMaster(li.dataset.slug);
+          $("#master-dropdown")?.classList.remove("force-open");
+          if (location.pathname === "/") renderHome();
+          else navigate("/");
+        };
+        li.addEventListener("click", choose);
+        li.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } });
+      });
+    }
+
     $("#search-btn").onclick = () => {
       state.searchOpen = !state.searchOpen;
       renderHeader();
@@ -192,15 +220,75 @@
       navigate(`/search?q=${encodeURIComponent(q)}`);
     });
     $("#avatar-menu-btn")?.addEventListener("click", () => {
-      state.accountMenu = !state.accountMenu;
-      renderHeader();
+      const wrap = $(".account-wrap");
+      const open = wrap.classList.toggle("force-open");
+      $("#avatar-menu-btn").setAttribute("aria-expanded", open ? "true" : "false");
     });
     $("#logout-btn")?.addEventListener("click", async () => {
       try { await api("/auth/logout", {method:"POST"}); }
       catch {}
-      state.me = null; state.accountMenu = false;
+      state.me = null;
       navigate("/login");
     });
+
+    wireRolldowns($("#site-header"));
+    renderMobileNav();
+  }
+
+  // Generic "rolldown" behaviour for header dropdown lists (master tags,
+  // account menu): they auto open on hover/keyboard-focus and auto close
+  // the moment the mouse leaves / focus moves elsewhere. A click still
+  // pins them open (".force-open") for touch devices, which is cleared by
+  // tapping outside.
+  function wireRolldowns(root) {
+    root.querySelectorAll(".rolldown").forEach(wrap => {
+      wrap.addEventListener("mouseleave", () => closeRolldown(wrap));
+      wrap.addEventListener("focusout", e => {
+        if (!wrap.contains(e.relatedTarget)) closeRolldown(wrap);
+      });
+    });
+  }
+  function closeRolldown(wrap) {
+    wrap.classList.remove("force-open");
+    wrap.querySelector("[aria-expanded]")?.setAttribute("aria-expanded", "false");
+  }
+  document.addEventListener("click", e => {
+    $$(".rolldown.force-open").forEach(wrap => {
+      if (!wrap.contains(e.target)) closeRolldown(wrap);
+    });
+  });
+
+  // Mobile app-style bottom tab bar: mirrors the header's main actions so
+  // the phone view behaves like a native app shell instead of a squeezed
+  // desktop header. Hidden on wider viewports via CSS.
+  function renderMobileNav() {
+    const nav = $("#mobile-nav");
+    if (!nav) return;
+    const onHome = location.pathname === "/";
+    nav.innerHTML = `
+      <a class="mobile-nav-item ${onHome ? "active" : ""}" href="/" aria-label="Home">
+        <span class="mobile-nav-icon">▣</span><span>Home</span>
+      </a>
+      <button class="mobile-nav-item" id="mobile-search-btn" aria-label="Search">
+        <span class="mobile-nav-icon">⌕</span><span>Search</span>
+      </button>
+      ${state.me && state.currentMaster ? `
+        <button class="mobile-nav-item" id="mobile-compose-btn" aria-label="New post">
+          <span class="mobile-nav-icon">+</span><span>Post</span>
+        </button>` : ""}
+      ${state.me ? `
+        <a class="mobile-nav-item" href="/account" aria-label="Account">
+          <span class="mobile-nav-icon">${avatarHTML(state.me, "small")}</span><span>You</span>
+        </a>` : `
+        <a class="mobile-nav-item" href="/login" aria-label="Log in">
+          <span class="mobile-nav-icon">⚇</span><span>Log in</span>
+        </a>`}`;
+    $("#mobile-search-btn")?.addEventListener("click", () => {
+      state.searchOpen = true;
+      renderHeader();
+      $("#search-input")?.focus();
+    });
+    $("#mobile-compose-btn")?.addEventListener("click", () => setComposerOpen(true));
   }
 
   function renderFooter() {
@@ -680,65 +768,86 @@
         <section class="card">
           <h2>Replies (${d.replies.length})</h2>
           ${state.me ? replyFormHTML(post.id) : `<p class="muted"><a href="/login?return_to=${encodeURIComponent(location.pathname)}">Log in</a> to reply.</p>`}
-          <div id="reply-tree">${d.replies.map(n => replyNodeHTML(n, post.id, 0)).join("") || `<p class="muted">No replies yet.</p>`}</div>
+          ${!state.me && d.replies.length ? `
+            <div id="guest-thread-teaser">
+              <div id="reply-tree">${replyNodeHTML(d.replies[0], post.id, 0)}</div>
+              ${d.replies.length > 1 ? `
+                <button class="link-btn" id="guest-thread-expand">▸ Show full thread (${d.replies.length} replies)</button>` : ""}
+            </div>` : `
+            <div id="reply-tree">${d.replies.map(n => replyNodeHTML(n, post.id, 0)).join("") || `<p class="muted">No replies yet.</p>`}</div>`}
         </section>`;
       wireLikeButtons(app);
       wireShareButtons(app);
+      $("#guest-thread-expand")?.addEventListener("click", () => {
+        const tree = $("#reply-tree");
+        tree.innerHTML = d.replies.map(n => replyNodeHTML(n, post.id, 0)).join("");
+        $("#guest-thread-expand").remove();
+        wireLikeButtons(app);
+        wirePostInteractions(app, post);
+      });
       wireReplyForm($(`[data-reply-form="post-${post.id}"]`), app, post.id);
-      // Reply to a specific reply
-      app.querySelectorAll("[data-open-reply]").forEach(btn => {
-        btn.onclick = () => {
-          const replyId = btn.dataset.openReply;
-          const slot = $(`#reply-inline-${replyId}`);
-          if (slot.innerHTML) { slot.innerHTML = ""; return; }
-          slot.innerHTML = replyFormHTML(post.id, replyId);
-          wireReplyForm(slot.querySelector("form"), app, post.id);
-        };
-      });
-
-      // Reply to OP (parent post) from inside a nested reply
-      app.querySelectorAll("[data-open-reply-op]").forEach(btn => {
-        btn.onclick = () => {
-          const topForm = $(`[data-reply-form="post-${post.id}"]`);
-          if (topForm) { topForm.querySelector("textarea").focus(); topForm.scrollIntoView({behavior:"smooth", block:"center"}); }
-        };
-      });
-
-      // Expand/collapse child replies
-      app.querySelectorAll("[data-expand]").forEach(btn => {
-        btn.onclick = () => {
-          const id = btn.dataset.expand;
-          const box = $(`#children-${id}`);
-          const collapsed = box.hidden;
-          box.hidden = !collapsed;
-          btn.textContent = collapsed
-            ? `▾ ${box.querySelectorAll(":scope > .reply-node").length} ${box.querySelectorAll(":scope > .reply-node").length === 1 ? "reply" : "replies"}`
-            : `▸ ${box.querySelectorAll(":scope > .reply-node").length} ${box.querySelectorAll(":scope > .reply-node").length === 1 ? "reply" : "replies"}`;
-          if (collapsed) wireLikeButtons(box);
-        };
-      });
-
-      // Backlink hover: highlight target reply, click: scroll to it
-      app.querySelectorAll("[data-target-reply]").forEach(a => {
-        const targetId = a.dataset.targetReply;
-        a.onclick = e => {
-          e.preventDefault();
-          const target = app.querySelector(`[data-reply-id="${targetId}"]`);
-          if (!target) return;
-          // expand parents if hidden
-          let el = target;
-          while (el) {
-            if (el.hidden) el.hidden = false;
-            el = el.parentElement;
-          }
-          target.scrollIntoView({behavior:"smooth", block:"center"});
-          target.classList.add("reply-highlight");
-          setTimeout(() => target.classList.remove("reply-highlight"), 1500);
-        };
-      });
+      wirePostInteractions(app, post);
 
       return;
     } catch (e) { app.innerHTML = errorBox(e); return; }
+  }
+
+  // Wires up reply-related interactions within the post's reply tree
+  // (open reply box, reply-to-OP, expand/collapse children, backlinks).
+  // Shared between the initial render and the guest "show full thread"
+  // expansion, since both need the same handlers attached.
+  function wirePostInteractions(app, post) {
+    // Reply to a specific reply
+    app.querySelectorAll("[data-open-reply]").forEach(btn => {
+      btn.onclick = () => {
+        const replyId = btn.dataset.openReply;
+        const slot = $(`#reply-inline-${replyId}`);
+        if (slot.innerHTML) { slot.innerHTML = ""; return; }
+        slot.innerHTML = replyFormHTML(post.id, replyId);
+        wireReplyForm(slot.querySelector("form"), app, post.id);
+      };
+    });
+
+    // Reply to OP (parent post) from inside a nested reply
+    app.querySelectorAll("[data-open-reply-op]").forEach(btn => {
+      btn.onclick = () => {
+        const topForm = $(`[data-reply-form="post-${post.id}"]`);
+        if (topForm) { topForm.querySelector("textarea").focus(); topForm.scrollIntoView({behavior:"smooth", block:"center"}); }
+      };
+    });
+
+    // Expand/collapse child replies
+    app.querySelectorAll("[data-expand]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.expand;
+        const box = $(`#children-${id}`);
+        const collapsed = box.hidden;
+        box.hidden = !collapsed;
+        btn.textContent = collapsed
+          ? `▾ ${box.querySelectorAll(":scope > .reply-node").length} ${box.querySelectorAll(":scope > .reply-node").length === 1 ? "reply" : "replies"}`
+          : `▸ ${box.querySelectorAll(":scope > .reply-node").length} ${box.querySelectorAll(":scope > .reply-node").length === 1 ? "reply" : "replies"}`;
+        if (collapsed) wireLikeButtons(box);
+      };
+    });
+
+    // Backlink hover: highlight target reply, click: scroll to it
+    app.querySelectorAll("[data-target-reply]").forEach(a => {
+      const targetId = a.dataset.targetReply;
+      a.onclick = e => {
+        e.preventDefault();
+        const target = app.querySelector(`[data-reply-id="${targetId}"]`);
+        if (!target) return;
+        // expand parents if hidden
+        let el = target;
+        while (el) {
+          if (el.hidden) el.hidden = false;
+          el = el.parentElement;
+        }
+        target.scrollIntoView({behavior:"smooth", block:"center"});
+        target.classList.add("reply-highlight");
+        setTimeout(() => target.classList.remove("reply-highlight"), 1500);
+      };
+    });
   }
 
   async function renderReports() {
