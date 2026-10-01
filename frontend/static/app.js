@@ -164,7 +164,7 @@
         </a>
         <div class="search-wrap rolldown ${state.searchOpen ? "force-open" : ""}" id="search-wrap">
           <form class="search-inline rolldown-panel search-panel" id="search-form">
-            <input id="search-input" value="${esc(state.search || "")}" placeholder="Search users, posts, comments, or a date (e.g. 2026-05-01)" aria-label="Search everything">
+            <input id="search-input" value="${esc(state.search || "")}" placeholder="search..." aria-label="Search everything">
           </form>
           <button type="button" class="icon-btn" id="search-btn" aria-label="Search" aria-expanded="${state.searchOpen ? "true" : "false"}">⌕</button>
         </div>
