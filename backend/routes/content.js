@@ -31,7 +31,7 @@ function cleanOptionalText(value, max = 20000) {
   return value.slice(0, max);
 }
 
-function normalizeBodyInput(body, isReply) {
+function normalizeBodyInput(body, isReply, hasFile) {
   const bodyType = body.body_type;
   if (!['text', 'image', 'sound', 'video'].includes(bodyType)) {
     return { error: 'invalid_body_type' };
@@ -39,7 +39,7 @@ function normalizeBodyInput(body, isReply) {
   const bodyText = cleanOptionalText(body.body_text);
   const headerTitle = cleanOptionalText(body.header_title, 500);
   if (bodyType === 'text' && !bodyText) return { error: 'invalid_input' };
-  if (bodyType !== 'text' && !body.file && !bodyText) return { error: 'invalid_input' };
+  if (bodyType !== 'text' && !hasFile) return { error: 'invalid_input' };
   if (!isReply && (!body.master_tag_id || !body.tag_id)) return { error: 'invalid_input' };
   return { bodyType, bodyText, headerTitle };
 }
@@ -247,7 +247,7 @@ function createContentRouter({ contentDb }) {
   router.post('/posts', authenticate, upload.single('file'), async (req, res, next) => {
     let persisted = null;
     try {
-      const input = normalizeBodyInput(req.body, false);
+      const input = normalizeBodyInput(req.body, false, !!req.file);
       if (input.error) return res.status(400).json({ error: input.error });
 
       const masterTagId = Number.parseInt(req.body.master_tag_id, 10);
@@ -296,7 +296,7 @@ function createContentRouter({ contentDb }) {
       const post = contentDb.prepare(`SELECT id, deleted FROM posts WHERE id = ?`).get(postId);
       if (!post || post.deleted) return res.status(404).json({ error: 'not_found' });
 
-      const input = normalizeBodyInput(req.body, true);
+      const input = normalizeBodyInput(req.body, true, !!req.file);
       if (input.error) return res.status(400).json({ error: input.error });
 
       let parentReplyId = null;

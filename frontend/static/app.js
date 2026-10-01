@@ -2,6 +2,7 @@
   "use strict";
 
   const API = "/api/v1";
+  const LS_MASTER_KEY = "b1tm4p_selected_master";
   const state = {
     me: null,
     masters: [],
@@ -13,8 +14,25 @@
     feedLoading: false,
     search: "",
     masterSlug: "",
-    feedMode: "home"
+    feedMode: "home",
+    selectedMasterSlug: localStorage.getItem(LS_MASTER_KEY) || "",
+    composerOpen: false
   };
+
+  // The main feed always shows exactly one master tag's posts, picked from
+  // the header dropdown and remembered across visits/reloads.
+  function setSelectedMaster(slug) {
+    state.selectedMasterSlug = slug || "";
+    if (state.selectedMasterSlug) localStorage.setItem(LS_MASTER_KEY, state.selectedMasterSlug);
+    else localStorage.removeItem(LS_MASTER_KEY);
+  }
+
+  function ensureSelectedMaster() {
+    const slugs = state.masters.map(m => m.slug);
+    if (!state.selectedMasterSlug || !slugs.includes(state.selectedMasterSlug)) {
+      setSelectedMaster(slugs[0] || "");
+    }
+  }
 
   const $ = (s, root = document) => root.querySelector(s);
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({
@@ -114,11 +132,17 @@
   }
 
   function renderHeader() {
-    const appPath = location.pathname;
-    const reportContext = appPath.startsWith("/post/") ? `?content_type=post&content_id=${encodeURIComponent(appPath.slice(6))}` : "";
-    const brand = state.currentMaster
-      ? `<span>${esc(state.currentMaster.name)}</span>`
-      : `<span>B1tm4p</span>`;
+    const brand = `<span>B1tm4p</span>`;
+    const masterSelectHTML = state.masters.length ? `
+      <select id="master-select" class="master-select" aria-label="Master tag">
+        ${state.masters.map(m => `<option value="${esc(m.slug)}" ${m.slug === state.selectedMasterSlug ? "selected" : ""}>${esc(m.name)}</option>`).join("")}
+      </select>` : "";
+    // Header report button is only ever for the master tag itself (the whole
+    // category) — reporting individual posts/replies happens next to that
+    // content instead, see reportLinkHTML().
+    const reportHref = state.currentMaster
+      ? `/reports?content_type=master_tag&content_id=${encodeURIComponent(state.currentMaster.id)}`
+      : `/reports`;
 
     $("#site-header").className = "site-header";
     $("#site-header").innerHTML = `
@@ -130,8 +154,11 @@
             <input id="search-input" value="${esc(state.search || "")}" placeholder="Search posts" aria-label="Search posts">
           </form>` : ""}
         <a class="brand" href="/">${brand}</a>
-        <a class="icon-btn" href="/reports${reportContext}" aria-label="Report">⚑</a>
+        ${masterSelectHTML}
+        <a class="icon-btn" href="${reportHref}" aria-label="${state.currentMaster ? `Report ${esc(state.currentMaster.name)}` : "Report"}" title="${state.currentMaster ? `Report ${esc(state.currentMaster.name)}` : "Report"}">⚑</a>
         <div class="header-spacer"></div>
+        ${state.me && state.currentMaster ? `
+          <button class="icon-btn" id="composer-toggle-btn" aria-label="New post" aria-expanded="${state.composerOpen ? "true":"false"}">+</button>` : ""}
         ${state.me ? `
           <div class="account-wrap">
             <button class="avatar-button" id="avatar-menu-btn" aria-label="Account">
@@ -146,6 +173,14 @@
           </div>` : `<a href="/login">Log in</a>`}
       </div>`;
 
+    $("#composer-toggle-btn")?.addEventListener("click", () => {
+      setComposerOpen(!state.composerOpen);
+    });
+    $("#master-select")?.addEventListener("change", e => {
+      setSelectedMaster(e.target.value);
+      if (location.pathname === "/") renderHome();
+      else navigate("/");
+    });
     $("#search-btn").onclick = () => {
       state.searchOpen = !state.searchOpen;
       renderHeader();
@@ -219,6 +254,12 @@
     return "";
   }
 
+  // A grey, non-interactive "#id" badge next to content, so people can
+  // quote the right content_id when filing a report.
+  function contentIdHTML(contentId) {
+    return `<span class="content-id" title="Content ID">#${esc(contentId)}</span>`;
+  }
+
   function postHTML(post) {
     const author = post.author || {};
     const body = post.body_type === "text"
@@ -229,10 +270,13 @@
         ${avatarHTML(author)}
         <a class="author-name" href="/search?q=${encodeURIComponent(author.username || "")}">${esc(author.username || "unknown")}</a>
         <span class="timestamp">${relativeTime(post.created_at)}</span>
+        ${contentIdHTML(post.id)}
         <div class="row">
           <button class="like ${post.liked ? "liked":""}" data-like-type="post" data-like-id="${esc(post.id)}" title="Like">
             <span class="heart">${post.liked ? "♥" : "♡"}</span> <span class="like-count">${Number(post.likes_count || 0)}</span>
           </button>
+          ${shareButtonHTML(post)}
+          ${reportLinkHTML("post", post.id)}
         </div>
       </aside>
       <div class="content-body">
@@ -243,6 +287,12 @@
         </div>
       </div>
     </article>`;
+  }
+
+  // A report link for one piece of content (a post or reply), distinct from
+  // the header's report button which only ever reports the master tag.
+  function reportLinkHTML(contentType, contentId) {
+    return `<a class="icon-btn report-link" href="/reports?content_type=${encodeURIComponent(contentType)}&content_id=${encodeURIComponent(contentId)}" title="Report this ${contentType}" aria-label="Report this ${contentType}">⚑</a>`;
   }
 
   function wireLikeButtons(root) {
@@ -263,6 +313,60 @@
     });
   }
 
+  // A share button for one post: it only ever shares that single post's own
+  // link/text/image, never the feed or page it's sitting in.
+  function shareButtonHTML(post) {
+    const text = post.body_type === "text" ? (post.body_text || "") : "";
+    return `<button class="icon-btn share-btn" data-share-id="${esc(post.id)}"
+      data-share-title="${esc(post.header_title || "")}"
+      data-share-text="${esc(text)}"
+      data-share-type="${esc(post.body_type || "")}"
+      data-share-file="${esc(post.file_path || "")}"
+      title="Share this post" aria-label="Share this post">⤴</button>`;
+  }
+
+  function wireShareButtons(root) {
+    root.querySelectorAll("[data-share-id]").forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.dataset.shareId;
+        const url = `${location.origin}/post/${encodeURIComponent(id)}`;
+        const title = btn.dataset.shareTitle || "B1tm4p post";
+        const text = btn.dataset.shareText || "";
+        const bodyType = btn.dataset.shareType;
+        const filePath = btn.dataset.shareFile;
+
+        const copyFallback = async () => {
+          try {
+            await navigator.clipboard.writeText(url);
+            showToast("Link copied to clipboard.", "success");
+          } catch {
+            showToast("Couldn't share this post.", "error");
+          }
+        };
+
+        if (!navigator.share) { await copyFallback(); return; }
+
+        const payload = {title, text, url};
+        if (bodyType === "image" && filePath && navigator.canShare) {
+          try {
+            const res = await fetch(filePath);
+            const blob = await res.blob();
+            const ext = (blob.type.split("/")[1] || "jpg").split("+")[0];
+            const file = new File([blob], `post-${id}.${ext}`, {type: blob.type});
+            if (navigator.canShare({files: [file]})) payload.files = [file];
+          } catch { /* fall back to link-only share below */ }
+        }
+
+        try {
+          await navigator.share(payload);
+        } catch (e) {
+          if (e?.name === "AbortError") return;
+          await copyFallback();
+        }
+      };
+    });
+  }
+
   async function loadFeed(container, params = {}) {
     container.innerHTML = loading();
     state.feedParams = params; state.feedOffset = 0;
@@ -273,6 +377,7 @@
       container.innerHTML = d.items.map(postHTML).join("") +
         (d.items.length < d.total ? `<button class="secondary" id="load-more">Load more</button>` : "");
       wireLikeButtons(container);
+      wireShareButtons(container);
       $("#load-more")?.addEventListener("click", () => loadMoreFeed(container));
     } catch (e) { container.innerHTML = errorBox(e); }
   }
@@ -285,6 +390,7 @@
       btn?.remove();
       container.insertAdjacentHTML("beforeend", d.items.map(postHTML).join(""));
       wireLikeButtons(container);
+      wireShareButtons(container);
       if (state.feedOffset + state.feedLimit < d.total) {
         container.insertAdjacentHTML("beforeend", `<button class="secondary" id="load-more">Load more</button>`);
         $("#load-more")?.addEventListener("click", () => loadMoreFeed(container));
@@ -292,18 +398,14 @@
     } catch (e) { showToast(e.message, "error"); if (btn) btn.disabled = false; }
   }
 
-  function composerHTML() {
-    if (!state.me) return "";
-    return `<section class="card" id="composer">
-      <h2>New post</h2>
+  function composerHTML(master) {
+    if (!state.me || !master) return "";
+    return `<section class="card" id="composer" hidden>
+      <h2>New post in ${esc(master.name)}</h2>
       <form id="new-post-form" class="form-grid">
-        <label>Master tag
-          <select id="post-master" required><option value="">Select…</option>
-            ${state.masters.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}
-          </select>
-        </label>
+        <input type="hidden" id="post-master" value="${esc(master.id)}">
         <label>Tag
-          <select id="post-tag" required disabled><option value="">Select master first</option></select>
+          <select id="post-tag" required disabled><option value="">Loading…</option></select>
         </label>
         <label>Header title <input id="post-title" maxlength="200"></label>
         <label>Body type
@@ -319,9 +421,9 @@
     </section>`;
   }
 
-  async function wireComposer() {
+  async function wireComposer(master) {
     const form = $("#new-post-form");
-    if (!form) return;
+    if (!form || !master) return;
     const type = $("#post-body-type"), input = $("#post-body-input");
     const updateInput = () => {
       const t = type.value;
@@ -332,27 +434,25 @@
     updateInput();
     type.onchange = updateInput;
 
-    $("#post-master").onchange = async e => {
-      const select = $("#post-tag");
-      select.disabled = true;
-      select.innerHTML = `<option>Loading…</option>`;
-      try {
-        const d = await api(`/tags?master_slug=${encodeURIComponent(
-          state.masters.find(m => String(m.id) === e.target.value)?.slug || ""
-        )}&limit=100&offset=0`);
-        select.innerHTML = d.items.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
-        select.disabled = d.items.length === 0;
-      } catch (err) {
-        select.innerHTML = `<option>${esc(err.message)}</option>`;
-      }
-    };
+    const tagSelect = $("#post-tag");
+    tagSelect.disabled = true;
+    tagSelect.innerHTML = `<option>Loading…</option>`;
+    try {
+      const d = await api(`/tags?master_slug=${encodeURIComponent(master.slug)}&limit=100&offset=0`);
+      tagSelect.innerHTML = d.items.length
+        ? d.items.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")
+        : `<option value="">No tags under ${esc(master.name)}</option>`;
+      tagSelect.disabled = d.items.length === 0;
+    } catch (err) {
+      tagSelect.innerHTML = `<option value="">${esc(err.message)}</option>`;
+    }
 
     form.onsubmit = async e => {
       e.preventDefault();
       const status = $("#composer-status");
       status.innerHTML = "";
       const masterId = $("#post-master").value, tagId = $("#post-tag").value, bodyType = $("#post-body-type").value;
-      if (!masterId || !tagId) { status.innerHTML = `<span class="error">Select a master tag and tag.</span>`; return; }
+      if (!masterId || !tagId) { status.innerHTML = `<span class="error">Select a tag.</span>`; return; }
       const fd = new FormData();
       fd.append("master_tag_id", masterId);
       fd.append("tag_id", tagId);
@@ -371,6 +471,7 @@
         await api("/posts", {method:"POST", body:fd});
         form.reset(); updateInput();
         showToast("Posted.", "success");
+        setComposerOpen(false);
         await loadFeed($("#feed"), state.feedParams || {});
       } catch (err) {
         if (err.status === 401) navigate(`/login?return_to=${encodeURIComponent(location.pathname)}`);
@@ -379,20 +480,49 @@
     };
   }
 
+  function setComposerOpen(open) {
+    state.composerOpen = open;
+    const section = $("#composer");
+    if (section) {
+      section.hidden = !open;
+      if (open) { section.scrollIntoView({behavior:"smooth", block:"start"}); $("#post-title")?.focus(); }
+    }
+    const btn = $("#composer-toggle-btn");
+    if (btn) btn.setAttribute("aria-expanded", String(open));
+  }
+
   async function renderHome() {
-    state.currentMaster = null; state.feedMode = "home"; state.search = "";
+    state.feedMode = "home"; state.search = "";
     renderHeader(); renderFooter();
     const app = $("#app"); app.innerHTML = loading();
     try {
       await Promise.all([loadMe(), loadMasters()]);
+      ensureSelectedMaster();
+      if (!state.selectedMasterSlug) {
+        state.currentMaster = null;
+        renderHeader();
+        app.innerHTML = `<div class="empty"><h1 class="page-title">No master tags yet</h1><p class="muted">Ask a manager/admin to create one.</p></div>`;
+        return;
+      }
+      const d = await api(`/tags/master/${encodeURIComponent(state.selectedMasterSlug)}`);
+      state.currentMaster = d;
+      state.currentTags = d.tags || [];
+      state.composerOpen = false;
       renderHeader();
       app.innerHTML = `
-        <h1 class="page-title">Home</h1>
-        ${chipsHTML(state.masters)}
-        ${composerHTML()}
+        ${d.header_image_path
+          ? `<img class="banner" src="${esc(d.header_image_path)}" alt="${esc(d.name)} header">`
+          : `<div class="banner-placeholder">No header image</div>`}
+        <div class="row" style="justify-content:space-between;margin-top:16px">
+          <div><h1 class="page-title">${esc(d.name)}</h1><p class="muted">${esc(d.description || "")}</p></div>
+          ${["manager","admin"].includes(state.me?.role) ? `<label class="primary" style="cursor:pointer">Upload header <input id="header-upload" type="file" accept="image/*" hidden></label>` : ""}
+        </div>
+        ${chipsHTML(state.currentTags)}
+        ${composerHTML(d)}
         <section id="feed" class="feed">${loading()}</section>`;
-      await wireComposer();
-      await loadFeed($("#feed"));
+      $("#header-upload")?.addEventListener("change", uploadHeader);
+      await wireComposer(d);
+      await loadFeed($("#feed"), {master_slug: state.selectedMasterSlug});
     } catch (e) { app.innerHTML = errorBox(e); }
   }
 
@@ -405,6 +535,7 @@
       const d = await api(`/tags/master/${encodeURIComponent(slug)}`);
       state.currentMaster = d;
       state.currentTags = d.tags || [];
+      state.composerOpen = false;
       renderHeader();
       app.innerHTML = `
         ${d.header_image_path
@@ -415,10 +546,10 @@
           ${["manager","admin"].includes(state.me?.role) ? `<label class="primary" style="cursor:pointer">Upload header <input id="header-upload" type="file" accept="image/*" hidden></label>` : ""}
         </div>
         ${chipsHTML(state.currentTags)}
-        ${composerHTML()}
+        ${composerHTML(d)}
         <section id="feed" class="feed">${loading()}</section>`;
       $("#header-upload")?.addEventListener("change", uploadHeader);
-      await wireComposer();
+      await wireComposer(d);
       await loadFeed($("#feed"), {master_slug: slug});
     } catch (e) { app.innerHTML = errorBox(e); }
   }
@@ -429,7 +560,7 @@
     const fd = new FormData(); fd.append("header", file);
     try {
       await api(`/tags/master/${encodeURIComponent(state.currentMaster.id)}/header`, {method:"POST", body:fd});
-      await renderTag(state.currentMaster.slug);
+      await route();
     } catch (err) {
       if (err.status === 401) navigate(`/login?return_to=${encodeURIComponent(location.pathname)}`);
       else showToast(err.message, "error");
@@ -454,10 +585,12 @@
         ${avatarHTML(author, "small")}
         <span class="author-name">${esc(author.username || "unknown")}</span>
         <span class="timestamp">${relativeTime(node.created_at)}</span>
+        ${contentIdHTML(node.id)}
         ${!node.deleted ? `<button class="like ${node.liked?"liked":""}" data-like-type="reply" data-like-id="${esc(node.id)}">
           <span class="heart">${node.liked?"♥":"♡"}</span> <span class="like-count">${Number(node.likes_count||0)}</span>
         </button>` : ""}
         ${!node.deleted ? `<button class="link-btn" data-open-reply="${esc(node.id)}">Reply</button>` : ""}
+        ${!node.deleted ? reportLinkHTML("reply", node.id) : ""}
       </div>
       ${node.header_title ? `<div class="header-title">${esc(node.header_title)}</div>` : ""}
       ${body}
@@ -502,9 +635,12 @@
             ${avatarHTML(post.author)}
             <span class="author-name">${esc(post.author?.username || "unknown")}</span>
             <span class="timestamp">${relativeTime(post.created_at)}</span>
+            ${contentIdHTML(post.id)}
             <button class="like ${post.liked?"liked":""}" data-like-type="post" data-like-id="${esc(post.id)}">
               <span class="heart">${post.liked?"♥":"♡"}</span> <span class="like-count">${Number(post.likes_count||0)}</span>
             </button>
+            ${shareButtonHTML(post)}
+            ${reportLinkHTML("post", post.id)}
           </div>
           ${post.header_title ? `<div class="header-title">${esc(post.header_title)}</div>` : ""}
           ${body}
@@ -515,6 +651,7 @@
           <div id="reply-tree">${d.replies.map(n => replyNodeHTML(n, post.id, 0)).join("") || `<p class="muted">No replies yet.</p>`}</div>
         </section>`;
       wireLikeButtons(app);
+      wireShareButtons(app);
       wireReplyForm($(`[data-reply-form="post-${post.id}"]`), app, post.id);
       app.querySelectorAll("[data-open-reply]").forEach(btn => {
         btn.onclick = () => {
@@ -549,6 +686,8 @@
               <select id="report-type">
                 <option value="post" ${q.get("content_type")==="post"?"selected":""}>Post</option>
                 <option value="reply" ${q.get("content_type")==="reply"?"selected":""}>Reply</option>
+                <option value="master_tag" ${q.get("content_type")==="master_tag"?"selected":""}>Master tag</option>
+                <option value="tag" ${q.get("content_type")==="tag"?"selected":""}>Tag</option>
               </select>
             </label>
             <label>Content ID <input id="report-id" value="${esc(q.get("content_id") || "")}" required></label>
@@ -957,5 +1096,7 @@
   });
 
   renderFooter();
-  route();
+  // Load master tags once up front so the header's master-tag select is
+  // populated on every page, not just the ones that already fetch it.
+  loadMasters().then(route, route);
 })();

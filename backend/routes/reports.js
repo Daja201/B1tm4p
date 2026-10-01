@@ -1,6 +1,6 @@
 const express = require('express');
 const { authenticate, requireRole } = require('../middleware/auth');
-const { getUsersByIds } = require('../lib/crossDb');
+const { getUsersByIds, getMastersByIds, getTagsByIds } = require('../lib/crossDb');
 
 function now() {
   return (Date.now() / 1000) | 0;
@@ -22,6 +22,16 @@ function createReportsRouter({ contentDb, reportsDb }) {
         FROM replies WHERE id = ?
       `).get(contentId) || null;
     }
+    // Header "report" entry point: reports the master tag or tag itself
+    // (its name/slug), not any individual post under it.
+    if (contentType === 'master_tag') {
+      const m = getMastersByIds([contentId]).get(contentId);
+      return m ? { id: m.id, name: m.name, slug: m.slug, deleted: false, created_at: null } : null;
+    }
+    if (contentType === 'tag') {
+      const t = getTagsByIds([contentId]).get(contentId);
+      return t ? { id: t.id, name: t.name, slug: t.slug, deleted: false, created_at: null } : null;
+    }
     return null;
   }
 
@@ -33,7 +43,7 @@ function createReportsRouter({ contentDb, reportsDb }) {
         ? req.body.reason.trim().slice(0, 2000)
         : '';
 
-      if (!['post', 'reply'].includes(contentType) || !Number.isInteger(contentId) || !reason) {
+      if (!['post', 'reply', 'master_tag', 'tag'].includes(contentType) || !Number.isInteger(contentId) || !reason) {
         return res.status(400).json({ error: 'invalid_input' });
       }
 
@@ -83,13 +93,15 @@ function createReportsRouter({ contentDb, reportsDb }) {
             avatar_color: reporter.avatar_color
           } : null,
           content: content ? {
-            body_text: content.deleted ? null : content.body_text,
-            body_type: content.body_type,
-            file_path: content.deleted ? null : content.file_path,
+            body_text: content.deleted ? null : (content.body_text !== undefined ? content.body_text : null),
+            body_type: content.body_type || report.content_type,
+            file_path: content.deleted ? null : (content.file_path || null),
             deleted: !!content.deleted,
             snippet: content.deleted
               ? '[deleted]'
-              : (content.body_text ? content.body_text.slice(0, 300) : content.file_path || '')
+              : content.body_text ? content.body_text.slice(0, 300)
+              : content.name ? `${content.name}${content.slug ? ` (${content.slug})` : ''}`
+              : content.file_path || ''
           } : null
         };
       });
@@ -119,6 +131,12 @@ function createReportsRouter({ contentDb, reportsDb }) {
         SET status = ?, reviewed_by = ?, review_note = ?, reviewed_at = ?
         WHERE id = ?
       `).run(status, status === 'pending' ? null : req.user.id, reviewNote, reviewedAt, id);
+
+      // Soft-delete the reported content when approved (reviewed)
+      if (status === 'reviewed' && ['post', 'reply'].includes(report.content_type)) {
+        const table = report.content_type === 'post' ? 'posts' : 'replies';
+        contentDb.prepare(`UPDATE ${table} SET deleted = 1 WHERE id = ? AND deleted = 0`).run(report.content_id);
+      }
 
       res.json(reportsDb.prepare(`SELECT * FROM reports WHERE id = ?`).get(id));
     } catch (err) { next(err); }
