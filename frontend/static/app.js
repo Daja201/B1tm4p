@@ -16,6 +16,7 @@
     masterSlug: "",
     feedMode: "home",
     selectedMasterSlug: localStorage.getItem(LS_MASTER_KEY) || "",
+    selectedTagSlug: "",
     composerOpen: false
   };
 
@@ -27,12 +28,6 @@
     else localStorage.removeItem(LS_MASTER_KEY);
   }
 
-  function ensureSelectedMaster() {
-    const slugs = state.masters.map(m => m.slug);
-    if (!state.selectedMasterSlug || !slugs.includes(state.selectedMasterSlug)) {
-      setSelectedMaster(slugs[0] || "");
-    }
-  }
 
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
@@ -113,7 +108,7 @@
   function route() {
     const p = location.pathname;
     if (p === "/") return renderHome();
-    if (p.startsWith("/tag/")) return renderTag(decodeURIComponent(p.slice(5)));
+    if (p.startsWith("/tag/")) return renderTag(p.slice(5));
     if (p.startsWith("/post/")) return renderPost(p.slice(6));
     if (p === "/reports") return renderReports();
     if (p === "/account") return renderAccount();
@@ -349,9 +344,12 @@
     state.masters = d.items || [];
   }
 
-  function chipsHTML(items, activeSlug = "") {
+  function chipsHTML(items, activeSlug = "", masterSlug = "") {
+    const allHref = masterSlug ? `/tag/${encodeURIComponent(masterSlug)}` : "/";
+    const tagHref = (slug) => masterSlug ? `/tag/${encodeURIComponent(masterSlug)}/${encodeURIComponent(slug)}` : "#";
     return `<div class="chips">
-      ${items.map(x => `<a class="chip ${x.slug === activeSlug ? "active":""}" href="/tag/${encodeURIComponent(x.slug)}">${esc(x.name)}</a>`).join("")}
+      <a class="chip ${activeSlug ? "":"active"}" data-tag-slug="" href="${allHref}">All</a>
+      ${items.map(x => `<a class="chip ${x.slug === activeSlug ? "active":""}" data-tag-slug="${esc(x.slug)}" href="${tagHref(x.slug)}">${esc(x.name)}</a>`).join("")}
     </div>`;
   }
 
@@ -612,23 +610,72 @@
     if (btn) btn.setAttribute("aria-expanded", String(open));
   }
 
-  async function renderHome() {
-    state.feedMode = "home"; state.search = "";
+  // Counts are used only to pick sensible defaults (most-used master/tag);
+  // a tiny limit=1 request is enough since we only read `total`.
+  async function postCount(params) {
+    try { return (await fetchPosts(params, 1, 0)).total || 0; }
+    catch { return 0; }
+  }
+
+  async function pickMostUsedMasterSlug() {
+    if (!state.masters.length) return "";
+    const counts = await Promise.all(state.masters.map(m => postCount({master_slug: m.slug})));
+    let best = 0;
+    for (let i = 1; i < counts.length; i++) if (counts[i] > counts[best]) best = i;
+    return state.masters[best].slug;
+  }
+
+  async function pickMostUsedTagSlug(masterSlug, tags) {
+    if (!tags.length) return "";
+    const counts = await Promise.all(tags.map(t => postCount({master_slug: masterSlug, tag_slug: t.slug})));
+    let best = 0;
+    for (let i = 1; i < counts.length; i++) if (counts[i] > counts[best]) best = i;
+    return counts[best] > 0 ? tags[best].slug : "";
+  }
+
+  // Shared renderer for the master-tag feed, whether reached via "/"
+  // (home — picks a default master/tag) or "/tag/:masterSlug[/:tagSlug]"
+  // (explicit — only auto-picks a default tag, never a default master).
+  async function renderMasterView({masterSlug = null, tagSlug = null, isHome = false} = {}) {
+    state.feedMode = isHome ? "home" : "tag";
+    if (isHome) state.search = "";
     renderHeader(); renderFooter();
     const app = $("#app"); app.innerHTML = loading();
     try {
       await Promise.all([loadMe(), loadMasters()]);
-      ensureSelectedMaster();
-      if (!state.selectedMasterSlug) {
+
+      let targetMasterSlug = masterSlug;
+      if (isHome) {
+        const slugs = state.masters.map(m => m.slug);
+        if (!state.selectedMasterSlug || !slugs.includes(state.selectedMasterSlug)) {
+          setSelectedMaster((await pickMostUsedMasterSlug()) || slugs[0] || "");
+        }
+        targetMasterSlug = state.selectedMasterSlug;
+      } else {
+        setSelectedMaster(masterSlug);
+      }
+
+      if (!targetMasterSlug) {
         state.currentMaster = null;
         renderHeader();
         app.innerHTML = `<div class="empty"><h1 class="page-title">No master tags yet</h1><p class="muted">Ask a manager/admin to create one.</p></div>`;
         return;
       }
-      const d = await api(`/tags/master/${encodeURIComponent(state.selectedMasterSlug)}`);
+
+      const d = await api(`/tags/master/${encodeURIComponent(targetMasterSlug)}`);
       state.currentMaster = d;
       state.currentTags = d.tags || [];
       state.composerOpen = false;
+
+      // Only fall back to "most used tag" when no tag was explicitly
+      // requested (bare "/" or bare "/tag/:masterSlug") — an explicit
+      // tag in the URL, or the "All" chip, always wins.
+      let targetTagSlug = tagSlug;
+      if (targetTagSlug === null) {
+        targetTagSlug = await pickMostUsedTagSlug(targetMasterSlug, state.currentTags);
+      }
+      state.selectedTagSlug = targetTagSlug || "";
+
       renderHeader();
       app.innerHTML = `
         ${d.header_image_path
@@ -638,41 +685,44 @@
           <div><h1 class="page-title">${esc(d.name)}</h1><p class="muted">${esc(d.description || "")}</p></div>
           ${["manager","admin"].includes(state.me?.role) ? `<label class="primary" style="cursor:pointer">Upload header <input id="header-upload" type="file" accept="image/*" hidden></label>` : ""}
         </div>
-        ${chipsHTML(state.currentTags)}
+        ${chipsHTML(state.currentTags, state.selectedTagSlug, targetMasterSlug)}
         ${composerHTML(d)}
         <section id="feed" class="feed">${loading()}</section>`;
       $("#header-upload")?.addEventListener("change", uploadHeader);
+      wireTagChips(targetMasterSlug);
       await wireComposer(d);
-      await loadFeed($("#feed"), {master_slug: state.selectedMasterSlug});
+      await loadFeed($("#feed"), {master_slug: targetMasterSlug, tag_slug: state.selectedTagSlug || undefined});
     } catch (e) { app.innerHTML = errorBox(e); }
   }
 
-  async function renderTag(slug) {
-    state.feedMode = "tag"; state.masterSlug = slug;
-    renderHeader(); renderFooter();
-    const app = $("#app"); app.innerHTML = loading();
-    try {
-      await Promise.all([loadMe(), loadMasters()]);
-      const d = await api(`/tags/master/${encodeURIComponent(slug)}`);
-      state.currentMaster = d;
-      state.currentTags = d.tags || [];
-      state.composerOpen = false;
-      renderHeader();
-      app.innerHTML = `
-        ${d.header_image_path
-          ? `<img class="banner" src="${esc(d.header_image_path)}" alt="${esc(d.name)} header">`
-          : `<div class="banner-placeholder">No header image</div>`}
-        <div class="row" style="justify-content:space-between;margin-top:16px">
-          <div><h1 class="page-title">${esc(d.name)}</h1><p class="muted">${esc(d.description || "")}</p></div>
-          ${["manager","admin"].includes(state.me?.role) ? `<label class="primary" style="cursor:pointer">Upload header <input id="header-upload" type="file" accept="image/*" hidden></label>` : ""}
-        </div>
-        ${chipsHTML(state.currentTags)}
-        ${composerHTML(d)}
-        <section id="feed" class="feed">${loading()}</section>`;
-      $("#header-upload")?.addEventListener("change", uploadHeader);
-      await wireComposer(d);
-      await loadFeed($("#feed"), {master_slug: slug});
-    } catch (e) { app.innerHTML = errorBox(e); }
+  function renderHome() {
+    return renderMasterView({masterSlug: null, tagSlug: null, isHome: true});
+  }
+
+  function renderTag(pathRest) {
+    const [masterSlug, tagSlug] = pathRest.split("/").filter(Boolean).map(decodeURIComponent);
+    return renderMasterView({masterSlug, tagSlug: tagSlug || null, isHome: false});
+  }
+
+  // Clicking a tag chip (or "All") re-filters the current master's feed
+  // in place instead of doing a full page navigation, and keeps the URL
+  // (and back/forward history) in sync so the filter is shareable/bookmarkable.
+  function wireTagChips(masterSlug) {
+    $$(".chip[data-tag-slug]").forEach(chip => {
+      chip.addEventListener("click", async e => {
+        e.preventDefault();
+        e.stopPropagation();
+        const tagSlug = chip.dataset.tagSlug || "";
+        if (tagSlug === (state.selectedTagSlug || "")) return;
+        state.selectedTagSlug = tagSlug;
+        $$(".chip[data-tag-slug]").forEach(c => c.classList.toggle("active", c.dataset.tagSlug === tagSlug));
+        const url = tagSlug
+          ? `/tag/${encodeURIComponent(masterSlug)}/${encodeURIComponent(tagSlug)}`
+          : `/tag/${encodeURIComponent(masterSlug)}`;
+        history.replaceState({}, "", url);
+        await loadFeed($("#feed"), {master_slug: masterSlug, tag_slug: tagSlug || undefined});
+      });
+    });
   }
 
   async function uploadHeader(e) {
@@ -1275,10 +1325,50 @@
     state.currentMaster = null; renderHeader(); renderFooter();
     $("#app").innerHTML = `<div class="auth-page"><div class="card">
       <h1 class="page-title">Legal / Cookies</h1>
+
+      <h2>Cookies</h2>
       <p>This frontend uses the essential B1tm4p session cookie for authentication. No optional analytics cookie is introduced by this frontend.</p>
-      <p>User-submitted content remains the responsibility of the submitting user. The administrator/operator does not assume responsibility for user-submitted content.</p>
+
+      <h2>Your responsibility as an uploader</h2>
+      <p>You may only upload or submit content that you own, that you have the legal right to share, or that is otherwise lawful for you to post. Do not upload content that infringes anyone's copyright or other rights, that is illegal in your jurisdiction or the jurisdiction where this service is hosted, or that depicts or facilitates harm to others. By submitting content you confirm that you have the right to do so and that it complies with these rules.</p>
+
+      <h2>Liability</h2>
+      <p>User-submitted content remains the sole responsibility of the submitting user. The administrator/operator of this site does not review content before it is posted, does not endorse user-submitted content, and does not assume any legal responsibility or liability for content submitted by users. The administrator/operator bears no legal consequences for content that users choose to upload.</p>
+
+      <h2>Reporting</h2>
+      <p>Every post and reply can be reported. Reports are reviewed by moderators/admins, and content found to violate these rules, applicable law, or the rights of others may be removed and the responsible account may be sanctioned. If you believe content is illegal or violates someone's rights, please use the in-app report button rather than contacting the operator directly.</p>
+
+      <h2>Account &amp; moderation</h2>
+      <p>Accounts and content involved in violations may be removed without notice. Repeated or severe violations may result in a permanent ban and, where required by law, cooperation with the relevant authorities.</p>
+
       <p><a href="/">Back to B1tm4p</a></p>
     </div></div>`;
+  }
+
+  function showEntrySiteNotice() {
+    const KEY = "b1tm4p_entry_notice_seen";
+    if (sessionStorage.getItem(KEY)) return;
+    const root = $("#modal-root");
+    root.innerHTML = `<div class="modal-backdrop"><section class="modal">
+      <h2>Before you upload anything</h2>
+      <p>Only upload content that you own or otherwise have the legal right to share. Do not upload anything illegal.</p>
+      <p>The administrator/operator of this site bears no legal consequences for content users choose to upload &mdash; that responsibility stays with the uploader.</p>
+      <p>Every post and reply can be reported, and reported content is reviewed by moderators/admins.</p>
+      <p><a href="/legal">Read the full legal notice</a></p>
+      <div class="modal-actions" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+        <button class="primary" id="entry-notice-dismiss">Continue</button>
+        <button id="entry-notice-login">Go to login</button>
+      </div>
+    </section></div>`;
+    const dismiss = () => {
+      sessionStorage.setItem(KEY, "1");
+      root.innerHTML = "";
+    };
+    $("#entry-notice-dismiss").onclick = dismiss;
+    $("#entry-notice-login").onclick = () => {
+      dismiss();
+      navigate("/login");
+    };
   }
 
   function renderNotFound() {
@@ -1313,6 +1403,7 @@
   });
 
   renderFooter();
+  showEntrySiteNotice();
   // Load master tags once up front so the header's master-tag select is
   // populated on every page, not just the ones that already fetch it.
   loadMasters().then(route, route);
